@@ -16,7 +16,7 @@ let refresh_token = '';
 
 const scopes = 'user-read-playback-state user-modify-playback-state streaming';
 
-// 🚪 1. LOGIN REDIRECT TO SPOTIFY
+// 🟢 1. LOGIN REDIRECT TO SPOTIFY
 app.get('/login', (req, res) => {
   const authUrl = 'https://accounts.spotify.com/authorize?' +
     new URLSearchParams({
@@ -28,7 +28,7 @@ app.get('/login', (req, res) => {
   res.redirect(authUrl);
 });
 
-// 🔄 2. CALLBACK TO GET TOKENS
+// 🔁 2. GET TOKEN FROM CODE
 app.get('/callback', async (req, res) => {
   const code = req.query.code;
 
@@ -60,30 +60,60 @@ app.get('/callback', async (req, res) => {
     access_token = tokenData.access_token;
     refresh_token = tokenData.refresh_token;
 
-    console.log('✅ Spotify Access Token fetched:', access_token ? '✔️' : '❌');
+    console.log('✅ Access token fetched');
 
-    res.redirect('/');
+    // 🔄 After successful login, redirect to your Aeon frontend
+    res.redirect('https://spotify-clone-by-kahan.iceiy.com'); // <-- 🔁 replace with your actual frontend URL
   } catch (err) {
     console.error('❌ Token fetch error:', err);
     res.status(500).send('Token exchange failed');
   }
 });
 
-// 🧪 3. TEST TOKEN ENDPOINT
-app.get('/token', (req, res) => {
-  if (!access_token) {
-    return res.status(401).json({ error: 'Token not available. Please /login first.' });
+// 🔄 3. REFRESH TOKEN LOGIC
+async function refreshAccessToken() {
+  if (!refresh_token) return;
+
+  try {
+    const res = await fetch('https://accounts.spotify.com/api/token', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Basic ' + Buffer.from(
+          process.env.SPOTIFY_CLIENT_ID + ':' + process.env.SPOTIFY_CLIENT_SECRET
+        ).toString('base64'),
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: refresh_token,
+      }).toString()
+    });
+
+    const data = await res.json();
+    if (data.access_token) {
+      access_token = data.access_token;
+      console.log('♻️ Access token refreshed');
+    } else {
+      console.warn('⚠️ Could not refresh access token:', data);
+    }
+  } catch (err) {
+    console.error('❌ Failed to refresh token:', err);
   }
+}
+
+// 🔐 4. PROVIDE TOKEN
+app.get('/token', async (req, res) => {
+  if (!access_token) return res.status(401).json({ error: 'No token. Login at /login' });
+
+  await refreshAccessToken(); // optional refresh
   res.json({ access_token });
 });
 
-// 🎧 4. FETCH PLAYLIST DATA
+// 🎵 5. PLAYLIST FETCH
 app.get('/playlist', async (req, res) => {
-  const playlistId = '5ZLzQVTP13MFjQLOeCsygX'; // Change this to your desired playlist
+  const playlistId = '5ZLzQVTP13MFjQLOeCsygX';
 
-  if (!access_token) {
-    return res.status(401).json({ error: 'Access token missing. Please login first.' });
-  }
+  if (!access_token) return res.status(401).json({ error: 'Login required' });
 
   try {
     const spotifyRes = await fetch(`https://api.spotify.com/v1/playlists/${playlistId}`, {
@@ -93,18 +123,17 @@ app.get('/playlist', async (req, res) => {
       }
     });
 
+    const data = await spotifyRes.json();
+
     if (!spotifyRes.ok) {
-      const error = await spotifyRes.json();
-      console.warn('⚠️ Spotify API failed:', spotifyRes.status);
-      console.log('👉 Error details:', error);
-      return res.status(spotifyRes.status).json({ error: error.error.message });
+      console.warn('⚠️ API error:', data);
+      return res.status(spotifyRes.status).json({ error: data.error.message });
     }
 
-    const playlistData = await spotifyRes.json();
-    res.json(playlistData);
+    res.json(data);
   } catch (err) {
     console.error('❌ Playlist fetch error:', err);
-    res.status(500).json({ error: 'Failed to fetch playlist from Spotify' });
+    res.status(500).json({ error: 'Failed to fetch playlist' });
   }
 });
 
